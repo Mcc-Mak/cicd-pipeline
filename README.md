@@ -1,5 +1,7 @@
 # cicd-pipeline
 
+[![Quality gate status](https://sonarcloud.io/api/project_badges/measure?project=Mcc-Mak_cicd-pipeline&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=Mcc-Mak_cicd-pipeline)
+
 DevSecOps + compliance-check CI pipeline demo. A React + Vite app is built and deployed to GitHub Pages, gated by CodeQL (SAST) and SonarQube Cloud (SCA + quality).
 
 ## Pipeline overview
