@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. Versions follow semver.
 
+## 2.0.3 (2026-09-29)
+
+### Other
+- set 30-day leak period for one-time main scan
+
 ## 2.0.2 (2026-09-29)
 
 ### Other
