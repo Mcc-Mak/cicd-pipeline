@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here. Versions follow semver.
 
+## 2.0.0 (2026-09-29)
+
+### Breaking
+- Breaking change introduced in this release
+
+### Other
+- refactor: merge auto-merge.yml + git-control.yml into single ci-cd.yml
+
 ## 1.1.5 (2026-09-29)
 
 ### Fixed
