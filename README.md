@@ -5,7 +5,6 @@ DevSecOps + compliance-check CI pipeline demo. A React + Vite app is built and d
 ## Repository setup
 
 1. **Actions secrets** — Settings → Secrets and variables → Actions → Repository secrets:
-   - `GIT_PUSH_TOKEN` — GitHub classic PAT (Account → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token (classic)) with scopes: `repo`, `workflow`, `admin:org`, `user`, `project`. Used by the git-control automation to push to `dev-001`.
    - `SONAR_TOKEN` — SonarQube Cloud project token: https://sonarcloud.io/project/information?id=Mcc-Mak_cicd-pipeline
 2. **Pages source** — Settings → Pages → Source → **GitHub Actions**.
 3. **github-pages environment** — Settings → Environments → `github-pages` → Add deployment branch or tag rule → Name pattern: `main` → Add rule.
@@ -14,7 +13,7 @@ DevSecOps + compliance-check CI pipeline demo. A React + Vite app is built and d
 
 ## Git control flow (automated)
 
-On any push to `dev-001`, the pipeline bumps the semantic version using conventional commits (`feat`→minor, `fix`/`chore`→patch, `BREAKING CHANGE`/`!`→major; default patch), prepends a `## X.X.X (date)` section to `CHANGELOG.md`, creates a conventional commit (`chore(release): X.X.X` + entry body), and pushes `dev-001` to remote using `GIT_PUSH_TOKEN`. Its own release commit is loop-guarded so it does not re-trigger.
+On any push to `dev-001`, the pipeline bumps the semantic version using conventional commits (`feat`→minor, `fix`/`chore`→patch, `BREAKING CHANGE`/`!`→major; default patch), prepends a `## X.X.X (date)` section to `CHANGELOG.md`, creates a conventional commit (`chore(release): X.X.X` + entry body), and pushes `dev-001` to remote using the built-in `GITHUB_TOKEN`. Its own release commit is loop-guarded so it does not re-trigger.
 
 ## Pipeline
 

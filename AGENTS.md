@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Greenfield repo: the DevSecOps CI config and `sonar-project.properties` exist, but the React + Vite app does not (`package.json`, `src/`, `vite.config.ts` are not yet scaffolded). The first real task is usually creating the app to satisfy the contracts below.
+Greenfield repo: the DevSecOps CI config, `sonar-project.properties`, and the React + Vite app are scaffolded. See the contracts below for app requirements.
 
 ## Workflow convention
 Commit and push to `dev-001` automatically whenever changes are made — do not wait to be asked. Use conventional commit subjects (`feat:`, `fix:`, `chore:`, `BREAKING CHANGE`/`!`) so git-control bumps the version correctly.
@@ -24,14 +24,14 @@ The `deploy_pages` job runs `npm ci` → `npm run build` on Node 20 and uploads 
 - `auto-merge.yml` push trigger uses `paths-ignore: ['CHANGELOG.md']`, so the git-control release commit (CHANGELOG-only) does NOT re-trigger a redundant scan, and a CHANGELOG-only promotion to main won't redeploy (no app change).
 
 ## Git control automation
-`.github/workflows/git-control.yml` runs on every push to `dev-001` (and `workflow_dispatch`), powered by `GIT_PUSH_TOKEN`. It bumps the semantic version via conventional commits (`feat`→minor, `fix`/`chore`→patch, `BREAKING CHANGE` or `type!`→major; default patch), prepends a `## X.X.X (date)` section to `CHANGELOG.md`, then commits (`chore(release): X.X.X` + body of entries) and pushes to `dev-001`.
+`.github/workflows/git-control.yml` runs on every push to `dev-001` (and `workflow_dispatch`), using the default `GITHUB_TOKEN` (with `permissions: contents: write`). It bumps the semantic version via conventional commits (`feat`→minor, `fix`/`chore`→patch, `BREAKING CHANGE` or `type!`→major; default patch), prepends a `## X.X.X (date)` section to `CHANGELOG.md`, then commits (`chore(release): X.X.X` + body of entries) and pushes to `dev-001`.
 - Current version = topmost `## X.X.X` heading in `CHANGELOG.md`; commit range is bounded by the last `chore(release):` commit.
 - Loop guard: exits early when HEAD's subject matches `chore(release): X.X.X`, so its own push does not re-trigger a release. No path filter — runs on any change.
 - Concurrency group `git-control-dev-001` serializes runs (no cancel-in-progress).
+- Pushes by `GITHUB_TOKEN` do not trigger subsequent workflow runs, so the release commit won't re-trigger `auto-merge.yml`. This is the desired behavior — `auto-merge.yml` also has `paths-ignore: ['CHANGELOG.md']` as a double guard.
 
 ## Required secrets & repo settings
 `README.md` is the user-facing setup guide — keep it in sync with these. Configure via Repository → Settings:
-- `GIT_PUSH_TOKEN` (Actions secret) — GitHub classic PAT with scopes `repo, workflow, admin:org, user, project`. Used by the git-control automation to push to `dev-001`.
 - `SONAR_TOKEN` (Actions secret) — SonarQube Cloud token; both the scan and quality-gate jobs fail without it.
 - Pages → Source = "GitHub Actions" (not a branch).
 - Environments → `github-pages` → deployment branch rule = `main` (deploys trigger from `main`).
