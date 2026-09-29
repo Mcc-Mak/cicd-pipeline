@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. Versions follow semver.
 
+## 1.1.1 (2026-09-29)
+
+### Fixed
+- update deprecated actions (CodeQL v3→v4, SonarQube scan v5→v6)
+
 ## 1.1.0 (2026-09-29)
 
 ### Added
