@@ -12,6 +12,11 @@ on:
     branches:
       - dev
       - main
+  workflow_dispatch:
+
+concurrency:
+  group: auto-merge-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # =========================================================================
@@ -142,11 +147,99 @@ jobs:
           fi
 
   # =========================================================================
-  # DEPLOY TO GITHUB PAGES (Runs on push to main; gate enforced at PR time)
+  # AUTO-PROMOTE (dev-001 → dev → main via auto-created & auto-merged PRs)
+  # Runs only after security_checks passes on a dev-001 push. Each promotion
+  # creates a PR, waits for the PR's security_checks to pass, then merges.
+  # Deploy is triggered via workflow_dispatch because GITHUB_TOKEN pushes
+  # don't trigger subsequent workflow runs.
+  # =========================================================================
+  promote:
+    name: Auto-Promote (dev-001 → dev → main)
+    needs: security_checks
+    if: github.ref == 'refs/heads/dev-001' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Promote dev-001 → dev → main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          promote() {
+            local base="$1" head="$2" title="$3"
+
+            git fetch origin "$base" "$head"
+
+            local ahead
+            ahead=$(git rev-list --count "origin/${base}..origin/${head}" 2>/dev/null || echo 0)
+            if [ "$ahead" -eq 0 ]; then
+              echo "${head} has no commits ahead of ${base} — skipping"
+              return 0
+            fi
+            echo "${head} is ${ahead} commits ahead of ${base}"
+
+            local pr_number
+            pr_number=$(gh pr list --base "$base" --head "$head" --state open \
+              --json number --jq '.[0].number // empty')
+            if [ -z "$pr_number" ]; then
+              pr_number=$(gh pr create \
+                --base "$base" \
+                --head "$head" \
+                --title "$title" \
+                --body "Automated promotion from ${head} to ${base}." \
+                --json number --jq '.number')
+              echo "Created PR #${pr_number} (${head} → ${base})"
+            else
+              echo "Reusing existing PR #${pr_number} (${head} → ${base})"
+            fi
+
+            echo "Waiting for checks to register on PR #${pr_number}..."
+            for i in $(seq 1 30); do
+              check_count=$(gh pr checks "$pr_number" --json name --jq 'length' 2>/dev/null || echo 0)
+              if [ "$check_count" -gt 0 ]; then
+                echo "  ${check_count} check(s) registered"
+                break
+              fi
+              echo "  Attempt ${i}/30: no checks yet, waiting 5s..."
+              sleep 5
+            done
+
+            echo "Watching checks on PR #${pr_number}..."
+            if ! gh pr checks "$pr_number" --watch; then
+              echo "::error::Checks failed on PR #${pr_number} (${head} → ${base})"
+              exit 1
+            fi
+
+            gh pr merge "$pr_number" --merge --delete-branch=false
+            echo "Merged PR #${pr_number} (${head} → ${base})"
+
+            git fetch origin "$base"
+          }
+
+          promote "dev" "dev-001" "chore: auto-promote dev-001 → dev"
+          promote "main" "dev" "chore: auto-promote dev → main"
+
+          echo "Triggering deploy workflow on main..."
+          gh workflow run auto-merge.yml --ref main
+          echo "Deploy workflow triggered"
+
+  # =========================================================================
+  # DEPLOY TO GITHUB PAGES (Runs on main push or workflow_dispatch)
   # =========================================================================
   deploy_pages:
     name: Deploy React+Vite to GitHub Pages
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read

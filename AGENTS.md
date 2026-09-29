@@ -16,11 +16,14 @@ The `deploy_pages` job runs `npm ci` → `npm run build` on Node 20 and uploads 
 
 ## Branch / pipeline flow
 - Promotion flow: `dev-001` → `dev` → `main` (via PRs). Active work lands on `dev-001`; `main` is the release trunk.
-- Push to `dev-001` → Security & Quality Gate (CodeQL JS/TS + SonarQube Cloud + Sonar Quality Gate). No deploy here.
-- PR targeting `dev` or `main` → security job only (this is the gate before each promotion).
-- Push to `main` → `deploy_pages` deploys `dist/` to GitHub Pages. The gate is enforced at PR time (dev→main PR), not on the main push — `deploy_pages` has no `needs:` because `security_checks` is skipped on a main push. Protect `main` with a branch rule requiring PR + passing `security_checks` before merge.
-- Sonar Quality Gate failure halts the pipeline.
-- `auto-merge.yml` and `git-control.yml` both trigger on push to `dev-001` but don't conflict: `git-control` does release automation, `auto-merge` does security. They run in parallel (separate concurrency groups).
+- Push to `dev-001` → `security_checks` (CodeQL JS/TS + SonarQube Cloud + Sonar Quality Gate) → `promote` job (auto-creates & merges PRs). No deploy here.
+- `promote` job: after security gate passes, creates a PR `dev-001`→`dev`, waits for the PR's `security_checks` to pass (via `gh pr checks --watch`), merges it (`--merge`), then creates a PR `dev`→`main`, waits for check, merges. Skips promotion if the head branch has no commits ahead of the base. Reuses existing open PR if one already exists. After merging dev→main, triggers `deploy_pages` via `gh workflow run auto-merge.yml --ref main` (workflow_dispatch) because GITHUB_TOKEN pushes don't trigger workflows.
+- PR targeting `dev` or `main` → `security_checks` only (this is the gate before each promotion).
+- `deploy_pages` runs on main push or `workflow_dispatch` (triggered by `promote`). Builds with `npm ci` → `npm run build`, uploads `dist/` to GitHub Pages.
+- Branch protection on `main` → require PR + passing `Security & Quality Gate` (job name shown to GitHub as the check name) before merge. Do NOT require approvals — the `promote` job auto-merges without human review.
+- Sonar Quality Gate failure halts the pipeline (the `promote` job's `gh pr checks --watch` will fail and block merge).
+- `auto-merge.yml` has concurrency group `auto-merge-${{ github.ref }}` — serializes runs on the same ref. `cancel-in-progress` is true for PR events (new push supersedes old PR run) and false for push/dispatch (don't interrupt a running promotion).
+- `auto-merge.yml` and `git-control.yml` both trigger on push to `dev-001` but don't conflict: `git-control` does release automation, `auto-merge` does security + promotion. They run in parallel (separate concurrency groups).
 - `auto-merge.yml` push trigger uses `paths-ignore: ['CHANGELOG.md']`, so the git-control release commit (CHANGELOG-only) does NOT re-trigger a redundant scan, and a CHANGELOG-only promotion to main won't redeploy (no app change).
 
 ## Git control automation
@@ -35,6 +38,6 @@ The `deploy_pages` job runs `npm ci` → `npm run build` on Node 20 and uploads 
 - `SONAR_TOKEN` (Actions secret) — SonarQube Cloud token; both the scan and quality-gate jobs fail without it.
 - Pages → Source = "GitHub Actions" (not a branch).
 - Environments → `github-pages` → deployment branch rule = `main` (deploys trigger from `main`).
-- Branch protection on `main` → require PR + passing `security_checks` before merge (gate enforcement, since `deploy_pages` runs on the main push without `needs:`).
+- Branch protection on `main` → require PR + passing `Security & Quality Gate` before merge. Do NOT require approvals — the `promote` job auto-merges without human review.
 - *(Optional)* Email notifications → address + "Approved header" + Active.
 - `sonar-project.properties` pins `sonar.projectKey=Mcc-Mak_cicd-pipeline` and `sonar.organization=mcc-mak`. Renaming the repo or transferring org requires updating these and the Sonar project.
