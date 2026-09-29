@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. Versions follow semver.
 
+## 1.1.0 (2026-09-29)
+
+### Added
+- add auto-promote job (dev-001 → dev → main via auto-merged PRs)
+
 ## 1.0.0 (2026-09-29)
 
 ### Breaking
