@@ -211,18 +211,18 @@ jobs:
               echo "Reusing existing PR #${pr_number} (${head} → ${base})"
             fi
 
-            echo "Waiting for checks to register on PR #${pr_number}..."
-            for i in $(seq 1 30); do
-              check_count=$(gh pr checks "$pr_number" --json name --jq 'length' 2>/dev/null || echo 0)
-              if [ "$check_count" -gt 0 ]; then
-                echo "  ${check_count} check(s) registered"
+            echo "Waiting for 'Security & Quality Gate' check to register on PR #${pr_number}..."
+            for i in $(seq 1 60); do
+              if gh pr checks "$pr_number" --json name --jq '.[].name' 2>/dev/null \
+                   | grep -q "Security & Quality Gate"; then
+                echo "  'Security & Quality Gate' registered"
                 break
               fi
-              echo "  Attempt ${i}/30: no checks yet, waiting 5s..."
+              echo "  Attempt ${i}/60: not yet, waiting 5s..."
               sleep 5
             done
 
-            echo "Watching checks on PR #${pr_number}..."
+            echo "Watching all checks on PR #${pr_number}..."
             if ! gh pr checks "$pr_number" --watch; then
               echo "::error::Checks failed on PR #${pr_number} (${head} → ${base})"
               exit 1

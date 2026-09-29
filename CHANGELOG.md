@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. Versions follow semver.
 
+## 1.1.4 (2026-09-29)
+
+### Fixed
+- wait for 'Security & Quality Gate' check specifically before gh pr checks --watch
+
 ## 1.1.3 (2026-09-29)
 
 ### Fixed
