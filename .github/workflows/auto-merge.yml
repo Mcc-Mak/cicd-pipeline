@@ -47,8 +47,13 @@ jobs:
         uses: github/codeql-action/analyze@v4
 
       # 2. SonarQube Cloud Scan (SCA + Quality + Code Smells)
-      # It natively reads keys and organizations from your sonar-project.properties file
+      # Only on PRs — SonarCloud free plan covers main branch + PR analysis.
+      # Branch analysis of dev-001 is NOT covered (returns quality gate NONE).
+      # PR analysis IS free and still gates promotion: the promote job creates
+      # PRs, which trigger this job with Sonar, and promote waits for the PR
+      # check to pass before merging.
       - name: SonarQube Cloud Scan
+        if: github.event_name == 'pull_request'
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -59,6 +64,7 @@ jobs:
       # on SonarCloud's CE task API — it doesn't pass the organization parameter
       # required by SonarCloud for project-scoped tokens.
       - name: SonarQube Quality Gate Check
+        if: github.event_name == 'pull_request'
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io

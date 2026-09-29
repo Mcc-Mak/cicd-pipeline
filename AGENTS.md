@@ -16,9 +16,9 @@ The `deploy_pages` job runs `npm ci` → `npm run build` on Node 20 and uploads 
 
 ## Branch / pipeline flow
 - Promotion flow: `dev-001` → `dev` → `main` (via PRs). Active work lands on `dev-001`; `main` is the release trunk.
-- Push to `dev-001` → `security_checks` (CodeQL JS/TS + SonarQube Cloud + Sonar Quality Gate) → `promote` job (auto-creates & merges PRs). No deploy here.
-- `promote` job: after security gate passes, creates a PR `dev-001`→`dev`, waits for the PR's `security_checks` to pass (via `gh pr checks --watch`), merges it (`--merge`), then creates a PR `dev`→`main`, waits for check, merges. Skips promotion if the head branch has no commits ahead of the base. Reuses existing open PR if one already exists. After merging dev→main, triggers `deploy_pages` via `gh workflow run auto-merge.yml --ref main` (workflow_dispatch) because GITHUB_TOKEN pushes don't trigger workflows.
-- PR targeting `dev` or `main` → `security_checks` only (this is the gate before each promotion).
+- Push to `dev-001` → `security_checks` (CodeQL only — Sonar is PR-only because SonarCloud free plan doesn't cover branch analysis of non-main branches) → `promote` job (auto-creates & merges PRs). No deploy here.
+- `promote` job: after security gate passes, creates a PR `dev-001`→`dev`, waits for the PR's `security_checks` to pass (CodeQL + Sonar PR analysis + Quality Gate, via `gh pr checks --watch`), merges it (`--merge`), then creates a PR `dev`→`main`, waits for check, merges. Skips promotion if the head branch has no commits ahead of the base. Reuses existing open PR if one already exists. After merging dev→main, triggers `deploy_pages` via `gh workflow run auto-merge.yml --ref main` (workflow_dispatch) because GITHUB_TOKEN pushes don't trigger workflows.
+- PR targeting `dev` or `main` → `security_checks` (CodeQL + Sonar PR analysis + Quality Gate — this is the gate before each promotion).
 - `deploy_pages` runs on main push or `workflow_dispatch` (triggered by `promote`). Builds with `npm ci` → `npm run build`, uploads `dist/` to GitHub Pages.
 - Branch protection on `main` → require PR + passing `Security & Quality Gate` (job name shown to GitHub as the check name) before merge. Do NOT require approvals — the `promote` job auto-merges without human review.
 - Sonar Quality Gate failure halts the pipeline (the `promote` job's `gh pr checks --watch` will fail and block merge).
@@ -36,6 +36,8 @@ The `deploy_pages` job runs `npm ci` → `npm run build` on Node 20 and uploads 
 ## Required secrets & repo settings
 `README.md` is the user-facing setup guide — keep it in sync with these. Configure via Repository → Settings:
 - `SONAR_TOKEN` (Actions secret) — SonarQube Cloud token; both the scan and quality-gate jobs fail without it.
+- SonarCloud → `Mcc-Mak_cicd-pipeline` → Project Settings → Quality Gates → assign **"Sonar way"** (or another gate). Without this, quality gate status is `NONE` and the pipeline fails.
+- SonarCloud → `Mcc-Mak_cicd-pipeline` → Administration → General → Visibility = **Public** (if the GitHub repo is public, this enables free multi-branch analysis; otherwise the free plan covers main + PR analysis only).
 - Pages → Source = "GitHub Actions" (not a branch).
 - Environments → `github-pages` → deployment branch rule = `main` (deploys trigger from `main`).
 - Branch protection on `main` → require PR + passing `Security & Quality Gate` before merge. Do NOT require approvals — the `promote` job auto-merges without human review.
