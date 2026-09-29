@@ -2,6 +2,9 @@
 
 Greenfield repo: the DevSecOps CI config and `sonar-project.properties` exist, but the React + Vite app does not (`package.json`, `src/`, `vite.config.ts` are not yet scaffolded). The first real task is usually creating the app to satisfy the contracts below.
 
+## Workflow convention
+Commit and push to `dev-001` automatically whenever changes are made — do not wait to be asked. Use conventional commit subjects (`feat:`, `fix:`, `chore:`, `BREAKING CHANGE`/`!`) so git-control bumps the version correctly.
+
 ## App contract enforced by CI (`.github/workflows/auto-merge.yml`)
 The `deploy_pages` job runs `npm ci` → `npm run build` on Node 20 and uploads `./dist` to GitHub Pages. Any scaffold must satisfy:
 - `npm run build` produces a `dist/` directory (Vite default).
