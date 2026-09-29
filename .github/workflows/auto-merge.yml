@@ -47,6 +47,11 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@v5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+
+      # DEBUG: Print report-task.txt to diagnose quality gate 403
+      - name: Debug - Show Sonar report metadata
+        run: cat .scannerwork/report-task.txt
 
       # 3. Halt pipeline execution if SonarQube Cloud Quality Gate fails
       - name: SonarQube Quality Gate Check
@@ -54,6 +59,7 @@ jobs:
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
 
   # =========================================================================
   # DEPLOY TO GITHUB PAGES (Runs on push to main; gate enforced at PR time)
