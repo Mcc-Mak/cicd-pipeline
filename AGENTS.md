@@ -1,0 +1,37 @@
+# AGENTS.md
+
+Greenfield repo: the DevSecOps CI config and `sonar-project.properties` exist, but the React + Vite app does not (`package.json`, `src/`, `vite.config.ts` are not yet scaffolded). The first real task is usually creating the app to satisfy the contracts below.
+
+## App contract enforced by CI (`.github/workflows/auto-merge.yml`)
+The `deploy_pages` job runs `npm ci` → `npm run build` on Node 20 and uploads `./dist` to GitHub Pages. Any scaffold must satisfy:
+- `npm run build` produces a `dist/` directory (Vite default).
+- App source lives under `src/` — Sonar scans `sonar.sources=src`.
+- Vite `base` MUST be `'/cicd-pipeline/'`. Pages serves at `https://mcc-mak.github.io/cicd-pipeline/`, not the domain root; the Vite default `base: '/'` silently 404s all assets.
+- Test files must match `*.test.ts` / `*.test.tsx` / `*.test.js` to stay excluded from Sonar (`sonar.exclusions`). Use this naming when co-locating tests.
+- For future coverage: configure Vitest to emit `coverage/lcov.info` (path is already referenced, commented, in `sonar-project.properties`).
+- Use Node 20 locally to match CI.
+
+## Branch / pipeline flow
+- Promotion flow: `dev-001` → `dev` → `main` (via PRs). Active work lands on `dev-001`; `main` is the release trunk.
+- Push to `dev-001` → Security & Quality Gate (CodeQL JS/TS + SonarQube Cloud + Sonar Quality Gate). No deploy here.
+- PR targeting `dev` or `main` → security job only (this is the gate before each promotion).
+- Push to `main` → `deploy_pages` deploys `dist/` to GitHub Pages. The gate is enforced at PR time (dev→main PR), not on the main push — `deploy_pages` has no `needs:` because `security_checks` is skipped on a main push. Protect `main` with a branch rule requiring PR + passing `security_checks` before merge.
+- Sonar Quality Gate failure halts the pipeline.
+- `auto-merge.yml` and `git-control.yml` both trigger on push to `dev-001` but don't conflict: `git-control` does release automation, `auto-merge` does security. They run in parallel (separate concurrency groups).
+- `auto-merge.yml` push trigger uses `paths-ignore: ['CHANGELOG.md']`, so the git-control release commit (CHANGELOG-only) does NOT re-trigger a redundant scan, and a CHANGELOG-only promotion to main won't redeploy (no app change).
+
+## Git control automation
+`.github/workflows/git-control.yml` runs on every push to `dev-001` (and `workflow_dispatch`), powered by `GIT_PUSH_TOKEN`. It bumps the semantic version via conventional commits (`feat`→minor, `fix`/`chore`→patch, `BREAKING CHANGE` or `type!`→major; default patch), prepends a `## X.X.X (date)` section to `CHANGELOG.md`, then commits (`chore(release): X.X.X` + body of entries) and pushes to `dev-001`.
+- Current version = topmost `## X.X.X` heading in `CHANGELOG.md`; commit range is bounded by the last `chore(release):` commit.
+- Loop guard: exits early when HEAD's subject matches `chore(release): X.X.X`, so its own push does not re-trigger a release. No path filter — runs on any change.
+- Concurrency group `git-control-dev-001` serializes runs (no cancel-in-progress).
+
+## Required secrets & repo settings
+`README.md` is the user-facing setup guide — keep it in sync with these. Configure via Repository → Settings:
+- `GIT_PUSH_TOKEN` (Actions secret) — GitHub classic PAT with scopes `repo, workflow, admin:org, user, project`. Used by the git-control automation to push to `dev-001`.
+- `SONAR_TOKEN` (Actions secret) — SonarQube Cloud token; both the scan and quality-gate jobs fail without it.
+- Pages → Source = "GitHub Actions" (not a branch).
+- Environments → `github-pages` → deployment branch rule = `main` (deploys trigger from `main`).
+- Branch protection on `main` → require PR + passing `security_checks` before merge (gate enforcement, since `deploy_pages` runs on the main push without `needs:`).
+- *(Optional)* Email notifications → address + "Approved header" + Active.
+- `sonar-project.properties` pins `sonar.projectKey=Mcc-Mak_cicd-pipeline` and `sonar.organization=mcc-mak`. Renaming the repo or transferring org requires updating these and the Sonar project.

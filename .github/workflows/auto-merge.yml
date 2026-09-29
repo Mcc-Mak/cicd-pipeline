@@ -1,0 +1,97 @@
+name: "DevSecOps & Deployment Pipeline"
+
+on:
+  push:
+    branches:
+      - dev-001
+      - main
+    paths-ignore:
+      - 'CHANGELOG.md'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - dev
+      - main
+
+jobs:
+  # =========================================================================
+  # SECURITY CHECKS (Runs on dev-001 push or when opening PRs to dev/main)
+  # =========================================================================
+  security_checks:
+    name: Security & Quality Gate
+    if: github.ref == 'refs/heads/dev-001' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Pulls full git history for accurate Sonar attribution
+
+      # 1. Native GitHub CodeQL Scan (SAST)
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: 'javascript-typescript'
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+      # 2. SonarQube Cloud Scan (SCA + Quality + Code Smells)
+      # It natively reads keys and organizations from your sonar-project.properties file
+      - name: SonarQube Cloud Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      # 3. Halt pipeline execution if SonarQube Cloud Quality Gate fails
+      - name: SonarQube Quality Gate Check
+        uses: sonarsource/sonarqube-quality-gate-action@v2
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # =========================================================================
+  # DEPLOY TO GITHUB PAGES (Runs on push to main; gate enforced at PR time)
+  # =========================================================================
+  deploy_pages:
+    name: Deploy React+Vite to GitHub Pages
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Application
+        run: npm run build
+
+      - name: Upload Build Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

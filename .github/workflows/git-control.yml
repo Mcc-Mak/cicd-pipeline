@@ -1,0 +1,142 @@
+name: "Git Control"
+
+on:
+  push:
+    branches:
+      - dev-001
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: git-control-dev-001
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history, push token)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GIT_PUSH_TOKEN }}
+
+      - name: Loop guard — skip own release commits
+        id: guard
+        run: |
+          set -euo pipefail
+          head_subject="$(git log -1 --format=%s)"
+          if [[ "$head_subject" =~ ^chore\(release\):[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "skip=true (HEAD is release commit: $head_subject)"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump version, update CHANGELOG, commit, push
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          set -euo pipefail
+
+          # 1. Current version = topmost "## X.Y.Z" in CHANGELOG.md (else 0.0.0)
+          current="0.0.0"
+          if [[ -f CHANGELOG.md ]]; then
+            top="$(grep -m1 -E '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md || true)"
+            if [[ "$top" =~ ^##\ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+              current="${BASH_REMATCH[1]}"
+            fi
+          fi
+          echo "Current version: $current"
+
+          # 2. Boundary = last "chore(release):" commit; else full history
+          boundary="$(git log --grep="^chore(release):" -1 --format=%H || true)"
+          if [[ -n "$boundary" ]]; then
+            subjects="$(git log "${boundary}..HEAD" --format=%s)"
+            bodies="$(git log "${boundary}..HEAD" --format=%B)"
+          else
+            subjects="$(git log --format=%s)"
+            bodies="$(git log --format=%B)"
+          fi
+
+          # 3. Parse conventional commits → grouped entries + bump level
+          feats=(); fixes=(); chores=(); others=(); breaking=0
+          while IFS= read -r subj; do
+            [[ -z "$subj" ]] && continue
+            if [[ "$subj" =~ ^([a-z]+)(\!)?:\ (.+) ]]; then
+              type="${BASH_REMATCH[1]}"; mark="${BASH_REMATCH[2]}"; rest="${BASH_REMATCH[3]}"
+              if [[ -n "$mark" ]]; then breaking=1; fi
+              case "$type" in
+                feat)  feats+=("- $rest");;
+                fix)   fixes+=("- $rest");;
+                chore) chores+=("- $rest");;
+                *)     others+=("- $type: $rest");;
+              esac
+            else
+              others+=("- $subj")
+            fi
+          done <<< "$subjects"
+
+          if grep -qi "^BREAKING CHANGE:" <<< "$bodies"; then breaking=1; fi
+
+          if   [[ $breaking -eq 1 ]]; then bump="major"
+          elif [[ ${#feats[@]} -gt 0 ]]; then bump="minor"
+          else bump="patch"
+          fi
+          echo "Bump: $bump"
+
+          # 4. Compute next version
+          IFS='.' read -r major minor patch <<< "$current"
+          case "$bump" in
+            major) major=$((major+1)); minor=0; patch=0;;
+            minor) minor=$((minor+1)); patch=0;;
+            patch) patch=$((patch+1));;
+          esac
+          next="$major.$minor.$patch"
+          echo "Next version: $next"
+
+          # 5. Entry block (reused for CHANGELOG section + commit body)
+          entry="$(mktemp)"
+          {
+            if [[ $breaking -eq 1 ]]; then
+              printf '### Breaking\n- Breaking change introduced in this release\n\n'
+            fi
+            if [[ ${#feats[@]} -gt 0 ]]; then
+              printf '### Added\n'; printf '%s\n' "${feats[@]}"; printf '\n'
+            fi
+            if [[ ${#fixes[@]} -gt 0 ]]; then
+              printf '### Fixed\n'; printf '%s\n' "${fixes[@]}"; printf '\n'
+            fi
+            if [[ ${#chores[@]} -gt 0 ]] || [[ ${#others[@]} -gt 0 ]]; then
+              printf '### Other\n'
+              if [[ ${#chores[@]} -gt 0 ]]; then printf '%s\n' "${chores[@]}"; fi
+              if [[ ${#others[@]} -gt 0 ]]; then printf '%s\n' "${others[@]}"; fi
+              printf '\n'
+            fi
+          } > "$entry"
+
+          # 6. Prepend new section to CHANGELOG.md (newest first)
+          today="$(date -u +%Y-%m-%d)"
+          {
+            printf '# Changelog\n\n'
+            printf 'All notable changes to this project are documented here. Versions follow semver.\n\n'
+            printf '## %s (%s)\n\n' "$next" "$today"
+            cat "$entry"
+            if [[ -f CHANGELOG.md ]]; then
+              awk 'BEGIN{h=1} h&&/^## [0-9]/{h=0} h{next} {print}' CHANGELOG.md
+            fi
+          } > CHANGELOG.new
+          mv CHANGELOG.new CHANGELOG.md
+
+          # 7. Conventional release commit + push to dev-001
+          git add CHANGELOG.md
+          git commit -m "chore(release): $next" -m "$(cat "$entry")"
+          git push origin dev-001
+          echo "Released $next"
