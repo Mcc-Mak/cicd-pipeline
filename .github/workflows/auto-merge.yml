@@ -95,12 +95,36 @@ jobs:
           analysisId=$(echo "$response" | jq -r '.task.analysisId')
           echo "Analysis ID: $analysisId"
           
-          # Check quality gate status
-          qgResponse=$(curl -sf --user "$SONAR_TOKEN:" "${SONAR_HOST_URL}/api/qualitygates/project_status?analysisId=${analysisId}&organization=${organization}")
-          qgStatus=$(echo "$qgResponse" | jq -r '.projectStatus.status')
+          # Check quality gate status — try analysisId first, fall back to projectKey
+          projectKey=$(sed -n 's/^projectKey=\(.*\)/\1/p' "$metadata")
+          qgStatus=""
+          
+          # Attempt 1: analysisId + organization
+          qgResponse=$(curl -s -w "\n%{http_code}" --user "$SONAR_TOKEN:" "${SONAR_HOST_URL}/api/qualitygates/project_status?analysisId=${analysisId}&organization=${organization}" 2>/dev/null || true)
+          httpCode=$(echo "$qgResponse" | tail -1)
+          qgBody=$(echo "$qgResponse" | head -n -1)
+          echo "Quality gate API (analysisId): HTTP $httpCode"
+          
+          if [[ "$httpCode" == "200" ]]; then
+            qgStatus=$(echo "$qgBody" | jq -r '.projectStatus.status')
+          else
+            # Attempt 2: projectKey + organization (no analysisId)
+            qgResponse=$(curl -s -w "\n%{http_code}" --user "$SONAR_TOKEN:" "${SONAR_HOST_URL}/api/qualitygates/project_status?projectKey=${projectKey}&organization=${organization}" 2>/dev/null || true)
+            httpCode=$(echo "$qgResponse" | tail -1)
+            qgBody=$(echo "$qgResponse" | head -n -1)
+            echo "Quality gate API (projectKey): HTTP $httpCode"
+            if [[ "$httpCode" == "200" ]]; then
+              qgStatus=$(echo "$qgBody" | jq -r '.projectStatus.status')
+            fi
+          fi
           
           echo "Quality Gate status: $qgStatus"
           echo "Dashboard: $dashboardUrl"
+          
+          if [[ -z "$qgStatus" || "$qgStatus" == "null" ]]; then
+            echo "::error::Could not retrieve Quality Gate status (HTTP $httpCode). Check SONAR_TOKEN has Browse permission on the project."
+            exit 1
+          fi
           
           if [[ "$qgStatus" == "OK" ]]; then
             echo "::notice::Quality Gate PASSED"
