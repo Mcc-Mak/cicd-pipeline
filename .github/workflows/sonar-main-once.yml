@@ -19,6 +19,9 @@ jobs:
 
       - name: SonarQube Cloud Scan (main branch)
         uses: SonarSource/sonarqube-scan-action@v6
+        with:
+          args: >
+            -Dsonar.leak.period=30
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
