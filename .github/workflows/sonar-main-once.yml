@@ -1,0 +1,24 @@
+name: One-time Sonar main analysis
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sonar-main:
+    name: SonarQube Cloud — Analyze main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: SonarQube Cloud Scan (main branch)
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
