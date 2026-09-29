@@ -1,0 +1,283 @@
+name: "DevSecOps & Deployment Pipeline"
+
+on:
+  push:
+    branches:
+      - dev-001
+      - main
+    paths-ignore:
+      - 'CHANGELOG.md'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - dev
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: auto-merge-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # =========================================================================
+  # SECURITY CHECKS (Runs on dev-001 push or when opening PRs to dev/main)
+  # =========================================================================
+  security_checks:
+    name: Security & Quality Gate
+    if: github.ref == 'refs/heads/dev-001' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Pulls full git history for accurate Sonar attribution
+
+      # 1. Native GitHub CodeQL Scan (SAST)
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: 'javascript-typescript'
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+
+      # 2. SonarQube Cloud Scan (SCA + Quality + Code Smells)
+      # Only on PRs — SonarCloud free plan covers main branch + PR analysis.
+      # Branch analysis of dev-001 is NOT covered (returns quality gate NONE).
+      # PR analysis IS free and still gates promotion: the promote job creates
+      # PRs, which trigger this job with Sonar, and promote waits for the PR
+      # check to pass before merging.
+      - name: SonarQube Cloud Scan
+        if: github.event_name == 'pull_request'
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+
+      # 3. Halt pipeline execution if SonarQube Cloud Quality Gate fails
+      # Custom script because sonarsource/sonarqube-quality-gate-action@v1 gets 403
+      # on SonarCloud's CE task API — it doesn't pass the organization parameter
+      # required by SonarCloud for project-scoped tokens.
+      - name: SonarQube Quality Gate Check
+        if: github.event_name == 'pull_request'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          metadata=".scannerwork/report-task.txt"
+          ceTaskId=$(sed -n 's/^ceTaskId=\(.*\)/\1/p' "$metadata")
+          dashboardUrl=$(sed -n 's/^dashboardUrl=\(.*\)/\1/p' "$metadata")
+          organization=$(sed -n 's/^organization=\(.*\)/\1/p' "$metadata")
+          
+          echo "Polling CE task: $ceTaskId (organization: $organization)"
+          
+          # Poll CE task status (with organization parameter for SonarCloud)
+          status="PENDING"
+          endTime=$(( SECONDS + 280 ))
+          while [[ "$status" == "PENDING" || "$status" == "IN_PROGRESS" ]] && [ $SECONDS -lt $endTime ]; do
+            printf '.'
+            sleep 5
+            response=$(curl -sf --user "$SONAR_TOKEN:" "${SONAR_HOST_URL}/api/ce/task?id=${ceTaskId}&organization=${organization}" || echo '{"task":{"status":"PENDING"}}')
+            status=$(echo "$response" | jq -r '.task.status')
+          done
+          echo ""
+          
+          if [[ "$status" == "PENDING" || "$status" == "IN_PROGRESS" ]]; then
+            echo "::error::Polling timeout reached waiting for Sonar scan to complete"
+            exit 1
+          fi
+          if [[ "$status" == "CANCELED" ]]; then
+            echo "::error::Sonar background task was CANCELED"
+            exit 1
+          fi
+          if [[ "$status" == "FAILED" ]]; then
+            errorMsg=$(echo "$response" | jq -r '.task.errorMessage // "No error message"')
+            echo "::error::Sonar background task FAILED: $errorMsg"
+            exit 1
+          fi
+          
+          analysisId=$(echo "$response" | jq -r '.task.analysisId')
+          echo "Analysis ID: $analysisId"
+          
+          # Check quality gate status — try analysisId first, fall back to projectKey
+          projectKey=$(sed -n 's/^projectKey=\(.*\)/\1/p' "$metadata")
+          qgStatus=""
+          
+          # Attempt 1: analysisId + organization
+          qgResponse=$(curl -s -w "\n%{http_code}" --user "$SONAR_TOKEN:" "${SONAR_HOST_URL}/api/qualitygates/project_status?analysisId=${analysisId}&organization=${organization}" 2>/dev/null || true)
+          httpCode=$(echo "$qgResponse" | tail -1)
+          qgBody=$(echo "$qgResponse" | head -n -1)
+          echo "Quality gate API (analysisId): HTTP $httpCode"
+          
+          if [[ "$httpCode" == "200" ]]; then
+            qgStatus=$(echo "$qgBody" | jq -r '.projectStatus.status')
+          else
+            # Attempt 2: projectKey + organization (no analysisId)
+            qgResponse=$(curl -s -w "\n%{http_code}" --user "$SONAR_TOKEN:" "${SONAR_HOST_URL}/api/qualitygates/project_status?projectKey=${projectKey}&organization=${organization}" 2>/dev/null || true)
+            httpCode=$(echo "$qgResponse" | tail -1)
+            qgBody=$(echo "$qgResponse" | head -n -1)
+            echo "Quality gate API (projectKey): HTTP $httpCode"
+            if [[ "$httpCode" == "200" ]]; then
+              qgStatus=$(echo "$qgBody" | jq -r '.projectStatus.status')
+            fi
+          fi
+          
+          echo "Quality Gate status: $qgStatus"
+          echo "Dashboard: $dashboardUrl"
+          
+          if [[ -z "$qgStatus" || "$qgStatus" == "null" ]]; then
+            echo "::error::Could not retrieve Quality Gate status (HTTP $httpCode). Check SONAR_TOKEN has Browse permission on the project."
+            exit 1
+          fi
+          
+          if [[ "$qgStatus" == "OK" ]]; then
+            echo "::notice::Quality Gate PASSED"
+          elif [[ "$qgStatus" == "WARN" ]]; then
+            echo "::warning::Quality Gate has WARNINGS"
+          elif [[ "$qgStatus" == "ERROR" ]]; then
+            echo "::error::Quality Gate FAILED"
+            exit 1
+          elif [[ "$qgStatus" == "NONE" ]]; then
+            echo "::error::No Quality Gate assigned to this project. Go to SonarCloud → Mcc-Mak_cicd-pipeline → Project Settings → Quality Gates and assign one (e.g. 'Sonar way')."
+            exit 1
+          else
+            echo "::error::Unexpected Quality Gate status: $qgStatus"
+            exit 1
+          fi
+
+  # =========================================================================
+  # AUTO-PROMOTE (dev-001 → dev → main via auto-created & auto-merged PRs)
+  # Runs only after security_checks passes on a dev-001 push. Each promotion
+  # creates a PR, waits for the PR's security_checks to pass, then merges.
+  # Deploy is triggered via workflow_dispatch because GITHUB_TOKEN pushes
+  # don't trigger subsequent workflow runs.
+  # =========================================================================
+  promote:
+    name: Auto-Promote (dev-001 → dev → main)
+    needs: security_checks
+    if: github.ref == 'refs/heads/dev-001' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Promote dev-001 → dev → main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          promote() {
+            local base="$1" head="$2" title="$3"
+
+            git fetch origin "$base" "$head"
+
+            local ahead
+            ahead=$(git rev-list --count "origin/${base}..origin/${head}" 2>/dev/null || echo 0)
+            if [ "$ahead" -eq 0 ]; then
+              echo "${head} has no commits ahead of ${base} — skipping"
+              return 0
+            fi
+            echo "${head} is ${ahead} commits ahead of ${base}"
+
+            local pr_number
+            pr_number=$(gh pr list --base "$base" --head "$head" --state open \
+              --json number --jq '.[0].number // empty')
+            if [ -z "$pr_number" ]; then
+              gh pr create \
+                --base "$base" \
+                --head "$head" \
+                --title "$title" \
+                --body "Automated promotion from ${head} to ${base}."
+              pr_number=$(gh pr list --base "$base" --head "$head" --state open \
+                --json number --jq '.[0].number')
+              echo "Created PR #${pr_number} (${head} → ${base})"
+            else
+              echo "Reusing existing PR #${pr_number} (${head} → ${base})"
+            fi
+
+            echo "Waiting for checks to register on PR #${pr_number}..."
+            for i in $(seq 1 30); do
+              check_count=$(gh pr checks "$pr_number" --json name --jq 'length' 2>/dev/null || echo 0)
+              if [ "$check_count" -gt 0 ]; then
+                echo "  ${check_count} check(s) registered"
+                break
+              fi
+              echo "  Attempt ${i}/30: no checks yet, waiting 5s..."
+              sleep 5
+            done
+
+            echo "Watching checks on PR #${pr_number}..."
+            if ! gh pr checks "$pr_number" --watch; then
+              echo "::error::Checks failed on PR #${pr_number} (${head} → ${base})"
+              exit 1
+            fi
+
+            gh pr merge "$pr_number" --merge --delete-branch=false
+            echo "Merged PR #${pr_number} (${head} → ${base})"
+
+            git fetch origin "$base"
+          }
+
+          promote "dev" "dev-001" "chore: auto-promote dev-001 → dev"
+          promote "main" "dev" "chore: auto-promote dev → main"
+
+          echo "Triggering deploy workflow on main..."
+          gh workflow run auto-merge.yml --ref main
+          echo "Deploy workflow triggered"
+
+  # =========================================================================
+  # DEPLOY TO GITHUB PAGES (Runs on main push or workflow_dispatch)
+  # =========================================================================
+  deploy_pages:
+    name: Deploy React+Vite to GitHub Pages
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Application
+        run: npm run build
+
+      - name: Upload Build Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
