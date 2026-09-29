@@ -49,17 +49,70 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
 
-      # DEBUG: Print report-task.txt to diagnose quality gate 403
-      - name: Debug - Show Sonar report metadata
-        run: cat .scannerwork/report-task.txt
-
       # 3. Halt pipeline execution if SonarQube Cloud Quality Gate fails
+      # Custom script because sonarsource/sonarqube-quality-gate-action@v1 gets 403
+      # on SonarCloud's CE task API — it doesn't pass the organization parameter
+      # required by SonarCloud for project-scoped tokens.
       - name: SonarQube Quality Gate Check
-        uses: sonarsource/sonarqube-quality-gate-action@v1
-        timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          metadata=".scannerwork/report-task.txt"
+          ceTaskId=$(sed -n 's/^ceTaskId=\(.*\)/\1/p' "$metadata")
+          dashboardUrl=$(sed -n 's/^dashboardUrl=\(.*\)/\1/p' "$metadata")
+          organization=$(sed -n 's/^organization=\(.*\)/\1/p' "$metadata")
+          
+          echo "Polling CE task: $ceTaskId (organization: $organization)"
+          
+          # Poll CE task status (with organization parameter for SonarCloud)
+          status="PENDING"
+          endTime=$(( SECONDS + 280 ))
+          while [[ "$status" == "PENDING" || "$status" == "IN_PROGRESS" ]] && [ $SECONDS -lt $endTime ]; do
+            printf '.'
+            sleep 5
+            response=$(curl -sf --user "$SONAR_TOKEN:" "${SONAR_HOST_URL}/api/ce/task?id=${ceTaskId}&organization=${organization}" || echo '{"task":{"status":"PENDING"}}')
+            status=$(echo "$response" | jq -r '.task.status')
+          done
+          echo ""
+          
+          if [[ "$status" == "PENDING" || "$status" == "IN_PROGRESS" ]]; then
+            echo "::error::Polling timeout reached waiting for Sonar scan to complete"
+            exit 1
+          fi
+          if [[ "$status" == "CANCELED" ]]; then
+            echo "::error::Sonar background task was CANCELED"
+            exit 1
+          fi
+          if [[ "$status" == "FAILED" ]]; then
+            errorMsg=$(echo "$response" | jq -r '.task.errorMessage // "No error message"')
+            echo "::error::Sonar background task FAILED: $errorMsg"
+            exit 1
+          fi
+          
+          analysisId=$(echo "$response" | jq -r '.task.analysisId')
+          echo "Analysis ID: $analysisId"
+          
+          # Check quality gate status
+          qgResponse=$(curl -sf --user "$SONAR_TOKEN:" "${SONAR_HOST_URL}/api/qualitygates/project_status?analysisId=${analysisId}&organization=${organization}")
+          qgStatus=$(echo "$qgResponse" | jq -r '.projectStatus.status')
+          
+          echo "Quality Gate status: $qgStatus"
+          echo "Dashboard: $dashboardUrl"
+          
+          if [[ "$qgStatus" == "OK" ]]; then
+            echo "::notice::Quality Gate PASSED"
+          elif [[ "$qgStatus" == "WARN" ]]; then
+            echo "::warning::Quality Gate has WARNINGS"
+          elif [[ "$qgStatus" == "ERROR" ]]; then
+            echo "::error::Quality Gate FAILED"
+            exit 1
+          else
+            echo "::error::Quality Gate not configured for this project"
+            exit 1
+          fi
 
   # =========================================================================
   # DEPLOY TO GITHUB PAGES (Runs on push to main; gate enforced at PR time)
