@@ -156,8 +156,11 @@ jobs:
   # AUTO-PROMOTE (dev-001 → dev → main via auto-created & auto-merged PRs)
   # Runs only after security_checks passes on a dev-001 push. Each promotion
   # creates a PR, waits for the PR's security_checks to pass, then merges.
-  # Deploy is triggered via workflow_dispatch because GITHUB_TOKEN pushes
-  # don't trigger subsequent workflow runs.
+  #
+  # Uses PROMOTE_TOKEN (a PAT) instead of GITHUB_TOKEN because PRs created by
+  # GITHUB_TOKEN do not trigger pull_request workflow runs (GitHub security
+  # feature). Without a PAT, the Security & Quality Gate check never registers
+  # on the PR, and the gate is silently bypassed.
   # =========================================================================
   promote:
     name: Auto-Promote (dev-001 → dev → main)
@@ -178,7 +181,7 @@ jobs:
 
       - name: Promote dev-001 → dev → main
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PROMOTE_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -212,15 +215,22 @@ jobs:
             fi
 
             echo "Waiting for 'Security & Quality Gate' check to register on PR #${pr_number}..."
+            local gate_registered=false
             for i in $(seq 1 60); do
               if gh pr checks "$pr_number" --json name --jq '.[].name' 2>/dev/null \
                    | grep -q "Security & Quality Gate"; then
                 echo "  'Security & Quality Gate' registered"
+                gate_registered=true
                 break
               fi
               echo "  Attempt ${i}/60: not yet, waiting 5s..."
               sleep 5
             done
+
+            if [ "$gate_registered" != "true" ]; then
+              echo "::error::'Security & Quality Gate' check never registered on PR #${pr_number} — aborting merge"
+              exit 1
+            fi
 
             echo "Watching all checks on PR #${pr_number}..."
             if ! gh pr checks "$pr_number" --watch; then

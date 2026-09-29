@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. Versions follow semver.
 
+## 1.1.5 (2026-09-29)
+
+### Fixed
+- use PROMOTE_TOKEN (PAT) for promote job — GITHUB_TOKEN PRs don't trigger workflows
+
 ## 1.1.4 (2026-09-29)
 
 ### Fixed
