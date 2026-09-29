@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. Versions follow semver.
 
+## 2.0.1 (2026-09-29)
+
+### Other
+- docs: add SonarCloud quality gate badge to README
+
 ## 2.0.0 (2026-09-29)
 
 ### Breaking
