@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. Versions follow semver.
 
+## 1.1.2 (2026-09-29)
+
+### Fixed
+- make Sonar scan PR-only (free plan doesn't cover dev-001 branch analysis)
+
 ## 1.1.1 (2026-09-29)
 
 ### Fixed
