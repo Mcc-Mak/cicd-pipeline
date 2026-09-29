@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. Versions follow semver.
 
+## 1.1.3 (2026-09-29)
+
+### Fixed
+- gh pr create on runner doesn't support --json flag, use gh pr list instead
+
 ## 1.1.2 (2026-09-29)
 
 ### Fixed
