@@ -199,12 +199,13 @@ jobs:
             pr_number=$(gh pr list --base "$base" --head "$head" --state open \
               --json number --jq '.[0].number // empty')
             if [ -z "$pr_number" ]; then
-              pr_number=$(gh pr create \
+              gh pr create \
                 --base "$base" \
                 --head "$head" \
                 --title "$title" \
-                --body "Automated promotion from ${head} to ${base}." \
-                --json number --jq '.number')
+                --body "Automated promotion from ${head} to ${base}."
+              pr_number=$(gh pr list --base "$base" --head "$head" --state open \
+                --json number --jq '.[0].number')
               echo "Created PR #${pr_number} (${head} → ${base})"
             else
               echo "Reusing existing PR #${pr_number} (${head} → ${base})"
