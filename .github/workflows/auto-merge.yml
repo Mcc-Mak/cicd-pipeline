@@ -133,8 +133,11 @@ jobs:
           elif [[ "$qgStatus" == "ERROR" ]]; then
             echo "::error::Quality Gate FAILED"
             exit 1
+          elif [[ "$qgStatus" == "NONE" ]]; then
+            echo "::error::No Quality Gate assigned to this project. Go to SonarCloud → Mcc-Mak_cicd-pipeline → Project Settings → Quality Gates and assign one (e.g. 'Sonar way')."
+            exit 1
           else
-            echo "::error::Quality Gate not configured for this project"
+            echo "::error::Unexpected Quality Gate status: $qgStatus"
             exit 1
           fi
 
