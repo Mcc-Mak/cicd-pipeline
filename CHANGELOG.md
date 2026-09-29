@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. Versions follow semver.
 
+## 2.0.4 (2026-09-29)
+
+### Other
+- remove one-time Sonar main analysis workflow
+
 ## 2.0.3 (2026-09-29)
 
 ### Other
